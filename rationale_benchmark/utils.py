@@ -48,6 +48,9 @@ class Annotation:
     query_type: str = None
     docids: Set[str] = None
 
+    def all_evidences(self) -> Tuple[Evidence]:
+        return tuple(list(chain.from_iterable(self.evidences)))
+
 def annotations_to_jsonl(annotations, output_file):
     with open(output_file, 'w') as of:
         for ann in sorted(annotations, key=lambda x: x.annotation_id):
