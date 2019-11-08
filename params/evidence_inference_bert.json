@@ -1,0 +1,31 @@
+{
+    "max_length": 512,
+    "bert_vocab": "/export/home/nazneen-gcp/rationale_benchmark/model_components/scibert_scivocab_uncased/vocab.txt",
+    "bert_dir": "/export/home/nazneen-gcp/rationale_benchmark/model_components/scibert_scivocab_uncased/",
+    "evidence_identifier": {
+        "batch_size": 10,
+        "epochs": 10,
+        "patience": 10,
+        "warmup_steps": 10,
+        "lr": 1e-05,
+        "max_grad_norm": 1,
+        "sampling_method": "random",
+        "use_half_precision": 0,
+        "sampling_ratio": 1
+    },
+    "evidence_classifier": {
+        "classes": [
+            "significantly decreased",
+            "no significant difference",
+            "significantly increased"
+        ],
+        "batch_size": 10,
+        "warmup_steps": 10,
+        "epochs": 10,
+        "patience": 10,
+        "lr": 1e-05,
+        "max_grad_norm": 1,
+        "sampling_method": "everything",
+        "use_half_precision": 0
+    }
+}

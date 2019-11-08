@@ -1,3 +1,6 @@
+model_components
+pipeline_outputs
+*.swp
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -102,3 +105,7 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+rationale_benchmark/data/esnli_previous
+data/esnli_previous
+esnli_union/
