@@ -12,11 +12,11 @@ formats and validation code are covered in [metrics](rationale_benchmark/metrics
 ## Models
 
 At the moment we offer two forms of pipeline models:
-* (Lehman, et al. 2019) - sentence level rationale identification, followed by taking the best resulting sentence and classifying it.
+* (Lehman, et al., 2019) - sentence level rationale identification, followed by taking the best resulting sentence and classifying it.
     * Both portions of this pipeline function via encoding the input sentence (via a GRU), attending (conditioned on a query vector), and making a classification.
 * BERT-To-BERT - the same as above, but using a BERT model.
 
-### (Lehman, et al. 2019) Pipeline
+### (Lehman, et al., 2019) Pipeline
 
 To run this model, we need to first:
 * create a `model_components`, `data`, and `output`, directory
