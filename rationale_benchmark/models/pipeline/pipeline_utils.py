@@ -337,7 +337,7 @@ def decode(evidence_identifier: nn.Module,
 
             # turn the above results into a format suitable for scoring via the rationale scorer
             # n.b. the sentence-level evidence predictions (hard and soft) are
-            # broadcast to the token level for scoring. The faithfulness class
+            # broadcast to the token level for scoring. The comprehensiveness class
             # score is also a lie since the pipeline model above is faithful by
             # design.
             decoded = dict()
@@ -357,7 +357,7 @@ def decode(evidence_identifier: nn.Module,
                         "classification": class_labels[pred.hard_classification],
                         "classification_scores": {class_labels[i]:s.item() for i, s in enumerate(pred.soft_classification)},
                         # TODO this should turn into the data distribution for the predicted class
-                        #"faithfulness_classification_scores": 0.0,
+                        #"comprehensiveness_classification_scores": 0.0,
                         "truth": pred.classification_data.kls,
                     }
                 decoded[ann_id]['rationales'].append({

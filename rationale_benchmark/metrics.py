@@ -264,12 +264,12 @@ def score_classifications(instances: List[dict], annotations: List[Annotation], 
         predicted.append(label_to_int[inst['classification']])
     classification_scores = classification_report(truth, predicted, output_dict=True, target_names=labels, digits=3)
     accuracy = accuracy_score(truth, predicted)
-    if 'faithfulness_classification_scores' in instances[0]:
-        faithfulness_scores = [x['classification_scores'][x['classification']] - x['faithfulness_classification_scores'][x['classification']] for x in instances]
-        faithfulness_score = np.average(faithfulness_scores)
+    if 'comprehensiveness_classification_scores' in instances[0]:
+        comprehensiveness_scores = [x['classification_scores'][x['classification']] - x['comprehensiveness_classification_scores'][x['classification']] for x in instances]
+        comprehensiveness_score = np.average(comprehensiveness_scores)
     else :
-        faithfulness_score = None
-        faithfulness_scores = None
+        comprehensiveness_score = None
+        comprehensiveness_scores = None
 
     if 'sufficiency_classification_scores' in instances[0]:
         sufficiency_scores = [x['classification_scores'][x['classification']] - x['sufficiency_classification_scores'][x['classification']] for x in instances]
@@ -278,14 +278,14 @@ def score_classifications(instances: List[dict], annotations: List[Annotation], 
         sufficiency_score = None
         sufficiency_scores = None
     
-    if 'faithfulness_classification_scores' in instances[0]:
-        faithfulness_entropies = [entropy(list(x['classification_scores'].values())) - entropy(list(x['faithfulness_classification_scores'].values())) for x in instances]
-        faithfulness_entropy = np.average(faithfulness_entropies)
-        faithfulness_kl = np.average(list(compute_kl(x['classification_scores'], x['faithfulness_classification_scores']) for x in instances))
+    if 'comprehensiveness_classification_scores' in instances[0]:
+        comprehensiveness_entropies = [entropy(list(x['classification_scores'].values())) - entropy(list(x['comprehensiveness_classification_scores'].values())) for x in instances]
+        comprehensiveness_entropy = np.average(comprehensiveness_entropies)
+        comprehensiveness_kl = np.average(list(compute_kl(x['classification_scores'], x['comprehensiveness_classification_scores']) for x in instances))
     else:
-        faithfulness_entropies = None
-        faithfulness_kl = None
-        faithfulness_entropy = None
+        comprehensiveness_entropies = None
+        comprehensiveness_kl = None
+        comprehensiveness_entropy = None
 
     if 'sufficiency_classification_scores' in instances[0]:
         sufficiency_entropies = [entropy(list(x['classification_scores'].values())) - entropy(list(x['sufficiency_classification_scores'].values())) for x in instances]
@@ -312,10 +312,10 @@ def score_classifications(instances: List[dict], annotations: List[Annotation], 
     return {
               'accuracy': accuracy,
               'prf': classification_scores,
-              'faithfulness': faithfulness_score,
+              'comprehensiveness': comprehensiveness_score,
               'sufficiency': sufficiency_score,
-              'faithfulness_entropy': faithfulness_entropy,
-              'faithfulness_kl': faithfulness_kl,
+              'comprehensiveness_entropy': comprehensiveness_entropy,
+              'comprehensiveness_kl': comprehensiveness_kl,
               'sufficiency_entropy': sufficiency_entropy,
               'sufficiency_kl': sufficiency_kl,
            }
@@ -372,9 +372,9 @@ def verify_instance(instance: dict, docs: Dict[str, list]):
     if not isinstance(classification_scores, dict):
         logging.info(f'Error! For instance annotation={instance["annotation_id"]}, classification_scores field {classification_scores} is not a dict!')
         error = True
-    faithfulness_classification_scores = instance.get('faithfulness_classification_scores', dict())
-    if not isinstance(faithfulness_classification_scores, dict):
-        logging.info(f'Error! For instance annotation={instance["annotation_id"]}, faithfulness_classification_scores field {faithfulness_classification_scores} is not a dict!')
+    comprehensiveness_classification_scores = instance.get('comprehensiveness_classification_scores', dict())
+    if not isinstance(comprehensiveness_classification_scores, dict):
+        logging.info(f'Error! For instance annotation={instance["annotation_id"]}, comprehensiveness_classification_scores field {comprehensiveness_classification_scores} is not a dict!')
         error = True
     sufficiency_classification_scores = instance.get('sufficiency_classification_scores', dict())
     if not isinstance(sufficiency_classification_scores, dict):
@@ -383,8 +383,8 @@ def verify_instance(instance: dict, docs: Dict[str, list]):
     if ('classification' in instance) != ('classification_scores' in instance):
         logging.info(f'Error! For instance annotation={instance["annotation_id"]}, when providing a classification, you must also provide classification scores!')
         error = True
-    if ('faithfulness_classification_scores' in instance) and not ('classification' in instance):
-        logging.info(f'Error! For instance annotation={instance["annotation_id"]}, when providing a classification, you must also provide a faithfulness_classification_score')
+    if ('comprehensiveness_classification_scores' in instance) and not ('classification' in instance):
+        logging.info(f'Error! For instance annotation={instance["annotation_id"]}, when providing a classification, you must also provide a comprehensiveness_classification_score')
         error = True
     if ('sufficiency_classification_scores' in instance) and not ('classification_scores' in instance):
         logging.info(f'Error! For instance annotation={instance["annotation_id"]}, when providing a sufficiency_classification_score, you must also provide a classification score!')
@@ -403,7 +403,7 @@ def verify_instances(instances: List[dict], docs: Dict[str, list]):
     instances_with_classification = list()
     instances_with_soft_rationale_predictions = list()
     instances_with_soft_sentence_predictions = list()
-    instances_with_faithfulness_classifications = list()
+    instances_with_comprehensiveness_classifications = list()
     instances_with_sufficiency_classifications = list()
     for instance in instances:
         instance_error = verify_instance(instance, docs)
@@ -412,8 +412,8 @@ def verify_instances(instances: List[dict], docs: Dict[str, list]):
             failed_validation.add(instance['annotation_id'])
         if instance.get('classification', None) != None:
             instances_with_classification.append(instance)
-        if instance.get('faithfulness_classification_scores', None) != None:
-            instances_with_faithfulness_classifications.append(instance)
+        if instance.get('comprehensiveness_classification_scores', None) != None:
+            instances_with_comprehensiveness_classifications.append(instance)
         if instance.get('sufficiency_classification_scores', None) != None:
             instances_with_sufficiency_classifications.append(instance)
         has_soft_rationales = []
@@ -443,8 +443,8 @@ def verify_instances(instances: List[dict], docs: Dict[str, list]):
     if len(instances_with_soft_rationale_predictions) != 0 and len(instances_with_soft_rationale_predictions) != len(instances):
         logging.info(f'Either all {len(instances)} must have a soft rationale prediction or none may, instead {len(instances_with_soft_rationale_predictions)} do!')
         error = True
-    if len(instances_with_faithfulness_classifications) != 0 and len(instances_with_faithfulness_classifications) != len(instances):
-        logging.info(f'Either all {len(instances)} must have a faithfulness classification or none may, instead {len(instances_with_faithfulness_classifications)} do!')
+    if len(instances_with_comprehensiveness_classifications) != 0 and len(instances_with_comprehensiveness_classifications) != len(instances):
+        logging.info(f'Either all {len(instances)} must have a comprehensiveness classification or none may, instead {len(instances_with_comprehensiveness_classifications)} do!')
     if len(instances_with_sufficiency_classifications) != 0 and len(instances_with_sufficiency_classifications) != len(instances):
         logging.info(f'Either all {len(instances)} must have a sufficiency classification or none may, instead {len(instances_with_sufficiency_classifications)} do!')
     if error:
@@ -498,10 +498,10 @@ def main():
         "classification_scores": Dict[str, float], optional
         # The next two fields are measures for how faithful your model is (the
         # rationales it predicts are in some sense causal of the prediction), and
-        # how sufficient they are. We approximate a measure for faithfulness by
+        # how sufficient they are. We approximate a measure for comprehensiveness by
         # asking that you remove the top k%% of tokens from your documents,
         # running your models again, and reporting the score distribution in the
-        # "faithfulness_classification_scores" field.
+        # "comprehensiveness_classification_scores" field.
         # We approximate a measure of sufficiency by asking exactly the converse
         # - that you provide model distributions on the removed k%% tokens.
         # 'k' is determined by human rationales, and is documented in our paper.
@@ -509,14 +509,14 @@ def main():
         # of information about your model: gradient based, attention based, other
         # interpretability measures, etc.
         # scores per class having removed k%% of the data, where k is determined by human comprehensive rationales
-        "faithfulness_classification_scores": Dict[str, float], optional
+        "comprehensiveness_classification_scores": Dict[str, float], optional
         # scores per class having access to only k%% of the data, where k is determined by human comprehensive rationales
         "sufficiency_classification_scores": Dict[str, float], optional
         # the number of tokens required to flip the prediction - see "Is Attention Interpretable" by Serrano and Smith.
         "tokens_to_flip": int, optional
     }
     When providing one of the optional fields, it must be provided for *every* instance.
-    The classification, classification_score, and faithfulness_classification_scores
+    The classification, classification_score, and comprehensiveness_classification_scores
     must together be present for every instance or absent for every instance.
     """)
     parser.add_argument('--iou_thresholds', dest='iou_thresholds', required=False, nargs='+', type=float, default=[0.5], help='''Thresholds for IOU scoring.
@@ -542,7 +542,7 @@ def main():
         if not args.iou_thresholds:
             raise ValueError("--iou_thresholds must be provided when running strict scoring")
         if not has_final_predictions:
-            raise ValueError("We must have a 'classification', 'classification_score', and 'faithfulness_classification_score' field in order to perform scoring!")
+            raise ValueError("We must have a 'classification', 'classification_score', and 'comprehensiveness_classification_score' field in order to perform scoring!")
     # TODO think about offering a sentence level version of these scores.
     if _has_hard_predictions(results):
         truth = list(chain.from_iterable(Rationale.from_annotation(ann) for ann in annotations))
