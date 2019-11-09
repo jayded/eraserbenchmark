@@ -43,3 +43,5 @@ Then we can run (as an example):
 PYTHONPATH=./:$PYTHONPATH python rationale_benchmark/models/pipeline/bert_pipeline.py --data_dir data/movies --output_dir output_bert/movies --model_params param/movies.json
 PYTHONPATH=./:$PYTHONPATH python rationale_benchmark/metrics.py --split test --data_dir data/movies --results output_bert/movies/test_decoded.jsonl --score_file output_bert/movies/test_scores.json
 ```
+
+More models including Lei et al can be found at : https://github.com/successar/Eraser-Benchmark-Baseline-Models
