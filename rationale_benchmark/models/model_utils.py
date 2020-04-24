@@ -8,6 +8,7 @@ import torch
 from torch import nn
 from torch.nn.utils.rnn import pad_sequence, PackedSequence, pack_padded_sequence, pad_packed_sequence
 
+
 @dataclass(eq=True, frozen=True)
 class PaddedSequence:
     """A utility class for padding variable length sequences mean for RNN input
@@ -24,15 +25,22 @@ class PaddedSequence:
 
     data: torch.Tensor
     batch_sizes: torch.Tensor
-    batch_first: bool=False
+    batch_first: bool = False
 
     @classmethod
-    def autopad(cls, data, batch_first: bool=False, padding_value=0, device=None) -> 'PaddedSequence':
-        padded = pad_sequence(data, batch_first=batch_first, padding_value=padding_value)
+    def autopad(cls, data, batch_first: bool = False, padding_value=0, device=None) -> 'PaddedSequence':
+        # handle tensors of size 0 (single item)
+        data_ = []
+        for d in data:
+            if len(d.size()) == 0:
+                d = d.unsqueeze(0)
+            data_.append(d)
+        padded = pad_sequence(data_, batch_first=batch_first, padding_value=padding_value)
         if batch_first:
-            batch_lengths = torch.LongTensor([len(x) for x in data])
+            batch_lengths = torch.LongTensor([len(x) for x in data_])
             if any([x == 0 for x in batch_lengths]):
-                raise ValueError("Found a 0 length batch element, this can't possibly be right: {}".format(batch_lengths))
+                raise ValueError(
+                    "Found a 0 length batch element, this can't possibly be right: {}".format(batch_lengths))
         else:
             # TODO actually test this codepath
             batch_lengths = torch.LongTensor([len(x) for x in data])
@@ -52,11 +60,11 @@ class PaddedSequence:
     def to(self, dtype=None, device=None, copy=False, non_blocking=False) -> 'PaddedSequence':
         # TODO make to() support all of the torch.Tensor to() variants
         return PaddedSequence(
-                    self.data.to(dtype=dtype, device=device, copy=copy, non_blocking=non_blocking),
-                    self.batch_sizes.to(device=device, copy=copy, non_blocking=non_blocking),
-                    batch_first=self.batch_first)
+            self.data.to(dtype=dtype, device=device, copy=copy, non_blocking=non_blocking),
+            self.batch_sizes.to(device=device, copy=copy, non_blocking=non_blocking),
+            batch_first=self.batch_first)
 
-    def mask(self, on=int(0), off=int(0), device='cpu', dtype=torch.bool, size=None) -> torch.Tensor:
+    def mask(self, on=int(0), off=int(0), device='cpu', size=None, dtype=None) -> torch.Tensor:
         if size is None:
             size = self.data.size()
         out_tensor = torch.zeros(*size, dtype=dtype)
@@ -78,10 +86,11 @@ class PaddedSequence:
         return out
 
     def flip(self) -> 'PaddedSequence':
-        return PaddedSequence(self.data.transpose(0,1), not self.batch_first, self.padding_value)
+        return PaddedSequence(self.data.transpose(0, 1), not self.batch_first, self.padding_value)
 
 
-def extract_embeddings(vocab: Set[str], embedding_file: str, unk_token: str='UNK', pad_token: str='PAD') -> (nn.Embedding, Dict[str, int], List[str]):
+def extract_embeddings(vocab: Set[str], embedding_file: str, unk_token: str = 'UNK', pad_token: str = 'PAD') -> (
+nn.Embedding, Dict[str, int], List[str]):
     vocab = vocab | set([unk_token, pad_token])
     if embedding_file.endswith('.bin'):
         WVs = KeyedVectors.load_word2vec_format(embedding_file, binary=True)

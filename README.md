@@ -28,20 +28,20 @@ To run this model, we need to first:
 
 Then we can run (as an example):
 ```
-PYTHONPATH=./:$PYTHONPATH python rationale_benchmark/models/pipeline/pipeline_train.py --data_dir data/movies --output_dir output/movies --model_params param/movies.json
+PYTHONPATH=./:$PYTHONPATH python rationale_benchmark/models/pipeline/pipeline_train.py --data_dir data/movies --output_dir output/movies --model_params params/movies.json
 PYTHONPATH=./:$PYTHONPATH python rationale_benchmark/metrics.py --split test --data_dir data/movies --results output/movies/test_decoded.jsonl --score_file output/movies/test_scores.json
 ```
 
 ### BERT-To-BERT Pipeline
 
-To run this model, instructions are effectively the same as the simple pipeline above, except we also need:
-* Download SciBERT for evidence-inference from https://s3-us-west-2.amazonaws.com/ai2-s2-research/scibert/pytorch_models/scibert_scivocab_uncased.tar
-* A 16G GPU (Tesla V100). The same caveats about batch sizes apply here as well.
+To run this model, instructions are effectively the same as the simple pipeline above, except we also require a GPU with approximately 16G of memory (e.g. Tesla V100). The same caveats about batch sizes apply here as well.
 
 Then we can run (as an example):
 ```
 PYTHONPATH=./:$PYTHONPATH python rationale_benchmark/models/pipeline/bert_pipeline.py --data_dir data/movies --output_dir output_bert/movies --model_params param/movies.json
 PYTHONPATH=./:$PYTHONPATH python rationale_benchmark/metrics.py --split test --data_dir data/movies --results output_bert/movies/test_decoded.jsonl --score_file output_bert/movies/test_scores.json
 ```
+
+For more examples, see the [BERT-to-BERT reproduction](REPRODUCTION.txt).
 
 More models including Lei et al can be found at : https://github.com/successar/Eraser-Benchmark-Baseline-Models

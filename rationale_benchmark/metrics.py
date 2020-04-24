@@ -7,7 +7,7 @@ import pprint
 from collections import Counter, defaultdict, namedtuple
 from dataclasses import dataclass
 from itertools import chain
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Set, Tuple
 
 import numpy as np
 import torch
@@ -143,13 +143,13 @@ def partial_match_score(truth: List[Rationale], pred: List[Rationale], threshold
         threshold_tps = dict()
         for k, vs in ious.items():
             threshold_tps[k] = sum(int(x >= threshold) for x in vs.values())
-        micro_r = sum(threshold_tps.values()) / sum(num_truth.values())
-        micro_p = sum(threshold_tps.values()) / sum(num_classifications.values())
+        micro_r = sum(threshold_tps.values()) / sum(num_truth.values()) if sum(num_truth.values()) > 0 else 0
+        micro_p = sum(threshold_tps.values()) / sum(num_classifications.values()) if sum(num_classifications.values()) > 0 else 0
         micro_f1 = _f1(micro_r, micro_p)
-        macro_rs = list(threshold_tps.get(k, 0.0) / n for k, n in num_truth.items())
-        macro_ps = list(threshold_tps.get(k, 0.0) / n for k, n in num_classifications.items())
-        macro_r = sum(macro_rs) / len(macro_rs)
-        macro_p = sum(macro_ps) / len(macro_ps)
+        macro_rs = list(threshold_tps.get(k, 0.0) / n if n > 0 else 0 for k, n in num_truth.items())
+        macro_ps = list(threshold_tps.get(k, 0.0) / n if n > 0 else 0 for k, n in num_classifications.items())
+        macro_r = sum(macro_rs) / len(macro_rs) if len(macro_rs) > 0 else 0
+        macro_p = sum(macro_ps) / len(macro_ps) if len(macro_ps) > 0 else 0
         macro_f1 = _f1(macro_r, macro_p)
         scores.append({'threshold': threshold,
                        'micro': {
@@ -247,7 +247,36 @@ def score_soft_tokens(paired_scores: List[PositionScoredDocument]) -> Dict[str, 
              'roc_auc_score': roc_auc,
            }
 
-def score_classifications(instances: List[dict], annotations: List[Annotation], docs: Dict[str, List[str]]) -> Dict[str, float]:
+def _instances_aopc(instances: List[dict], thresholds: List[float], key: str) -> Tuple[float, List[float]]:
+    dataset_scores = []
+    for inst in instances:
+        kls = inst['classification']
+        beta_0 = inst['classification_scores'][kls]
+        instance_scores = []
+        for score in filter(lambda x : x['threshold'] in thresholds, sorted(inst['thresholded_scores'], key=lambda x: x['threshold'])):
+            beta_k = score[key][kls]
+            delta = beta_0 - beta_k
+            instance_scores.append(delta)
+        assert len(instance_scores) == len(thresholds)
+        dataset_scores.append(instance_scores)
+    dataset_scores = np.array(dataset_scores)
+    # a careful reading of Samek, et al. "Evaluating the Visualization of What a Deep Neural Network Has Learned"
+    # and some algebra will show the reader that we can average in any of several ways and get the same result:
+    # over a flattened array, within an instance and then between instances, or over instances (by position) an
+    # then across them.
+    final_score = np.average(dataset_scores)
+    position_scores = np.average(dataset_scores, axis=0).tolist()
+
+    return final_score, position_scores
+
+def compute_aopc_scores(instances: List[dict], aopc_thresholds: List[float]):
+    if aopc_thresholds is None :
+        aopc_thresholds = sorted(set(chain.from_iterable([x['threshold'] for x in y['thresholded_scores']] for y in instances)))
+    aopc_comprehensiveness_score, aopc_comprehensiveness_points = _instances_aopc(instances, aopc_thresholds, 'comprehensiveness_classification_scores')
+    aopc_sufficiency_score, aopc_sufficiency_points = _instances_aopc(instances, aopc_thresholds, 'sufficiency_classification_scores')
+    return aopc_thresholds, aopc_comprehensiveness_score, aopc_comprehensiveness_points, aopc_sufficiency_score, aopc_sufficiency_points
+
+def score_classifications(instances: List[dict], annotations: List[Annotation], docs: Dict[str, List[str]], aopc_thresholds: List[float]) -> Dict[str, float]:
     def compute_kl(cls_scores_, faith_scores_):
         keys = list(cls_scores_.keys())
         cls_scores_ = [cls_scores_[k] for k in keys]
@@ -296,6 +325,10 @@ def score_classifications(instances: List[dict], annotations: List[Annotation], 
         sufficiency_kl = None
         sufficiency_entropy = None
 
+    if 'thresholded_scores' in instances[0]:
+        aopc_thresholds, aopc_comprehensiveness_score, aopc_comprehensiveness_points, aopc_sufficiency_score, aopc_sufficiency_points = compute_aopc_scores(instances, aopc_thresholds)
+    else:
+        aopc_thresholds, aopc_comprehensiveness_score, aopc_comprehensiveness_points, aopc_sufficiency_score, aopc_sufficiency_points = None, None, None, None, None
     if 'tokens_to_flip' in instances[0]:
         token_percentages = []
         for ann in annotations:
@@ -318,9 +351,14 @@ def score_classifications(instances: List[dict], annotations: List[Annotation], 
               'comprehensiveness_kl': comprehensiveness_kl,
               'sufficiency_entropy': sufficiency_entropy,
               'sufficiency_kl': sufficiency_kl,
+              'aopc_thresholds': aopc_thresholds,
+              'comprehensiveness_aopc': aopc_comprehensiveness_score,
+              'comprehensiveness_aopc_points': aopc_comprehensiveness_points,
+              'sufficiency_aopc': aopc_sufficiency_score,
+              'sufficiency_aopc_points': aopc_sufficiency_points,
            }
 
-def verify_instance(instance: dict, docs: Dict[str, list]):
+def verify_instance(instance: dict, docs: Dict[str, list], thresholds: Set[float]):
     error = False
     docids = []
     # verify the internal structure of these instances is correct:
@@ -389,6 +427,23 @@ def verify_instance(instance: dict, docs: Dict[str, list]):
     if ('sufficiency_classification_scores' in instance) and not ('classification_scores' in instance):
         logging.info(f'Error! For instance annotation={instance["annotation_id"]}, when providing a sufficiency_classification_score, you must also provide a classification score!')
         error = True
+    if 'thresholded_scores' in instance:
+        instance_thresholds = set(x['threshold'] for x in instance['thresholded_scores'])
+        if instance_thresholds != thresholds:
+            error = True
+            logging.info('Error: {instance["thresholded_scores"]} has thresholds that differ from previous thresholds: {thresholds}')
+        if 'comprehensiveness_classification_scores' not in instance\
+            or 'sufficiency_classification_scores' not in instance\
+            or 'classification' not in instance\
+            or 'classification_scores' not in instance:
+            error = True
+            logging.info('Error: {instance} must have comprehensiveness_classification_scores, sufficiency_classification_scores, classification, and classification_scores defined when including thresholded scores')
+        if not all('sufficiency_classification_scores' in x for x in instance['thresholded_scores']):
+            error = True
+            logging.info('Error: {instance} must have sufficiency_classification_scores for every threshold')
+        if not all('comprehensiveness_classification_scores' in x for x in instance['thresholded_scores']):
+            error = True
+            logging.info('Error: {instance} must have comprehensiveness_classification_scores for every threshold')
     return error
 
 def verify_instances(instances: List[dict], docs: Dict[str, list]):
@@ -405,8 +460,13 @@ def verify_instances(instances: List[dict], docs: Dict[str, list]):
     instances_with_soft_sentence_predictions = list()
     instances_with_comprehensiveness_classifications = list()
     instances_with_sufficiency_classifications = list()
+    instances_with_thresholded_scores = list()
+    if 'thresholded_scores' in instances[0]:
+        thresholds = set(x['threshold'] for x in instances[0]['thresholded_scores'])
+    else:
+        thresholds = None
     for instance in instances:
-        instance_error = verify_instance(instance, docs)
+        instance_error = verify_instance(instance, docs, thresholds)
         if instance_error:
             error = True
             failed_validation.add(instance['annotation_id'])
@@ -433,6 +493,8 @@ def verify_instances(instances: List[dict], docs: Dict[str, list]):
             if len(has_soft_sentences) != len(instance['rationales']):
                 error = True
                 logging.info(f'Error: instance {instance["annotation"]} has soft sentences for some but not all reported documents!')
+        if 'thresholded_scores' in instance:
+            instances_with_thresholded_scores.append(instance)
     logging.info(f'Error in instances: {len(failed_validation)} instances fail validation: {failed_validation}')
     if len(instances_with_classification) != 0 and len(instances_with_classification) != len(instances):
         logging.info(f'Either all {len(instances)} must have a classification or none may, instead {len(instances_with_classification)} do!')
@@ -444,15 +506,24 @@ def verify_instances(instances: List[dict], docs: Dict[str, list]):
         logging.info(f'Either all {len(instances)} must have a soft rationale prediction or none may, instead {len(instances_with_soft_rationale_predictions)} do!')
         error = True
     if len(instances_with_comprehensiveness_classifications) != 0 and len(instances_with_comprehensiveness_classifications) != len(instances):
+        error = True
         logging.info(f'Either all {len(instances)} must have a comprehensiveness classification or none may, instead {len(instances_with_comprehensiveness_classifications)} do!')
     if len(instances_with_sufficiency_classifications) != 0 and len(instances_with_sufficiency_classifications) != len(instances):
+        error = True
         logging.info(f'Either all {len(instances)} must have a sufficiency classification or none may, instead {len(instances_with_sufficiency_classifications)} do!')
+    if len(instances_with_thresholded_scores) != 0 and len(instances_with_thresholded_scores) != len(instances):
+        error = True
+        logging.info(f'Either all {len(instances)} must have thresholded scores or none may, instead {len(instances_with_thresholded_scores)} do!')
     if error:
         raise ValueError('Some instances are invalid, please fix your formatting and try again')
 
 def _has_hard_predictions(results: List[dict]) -> bool:
     # assumes that we have run "verification" over the inputs
-    return 'rationales' in results[0] and len(results[0]['rationales']) > 0 and 'hard_rationale_predictions' in results[0]['rationales'][0] and results[0]['rationales'][0]['hard_rationale_predictions'] is not None
+    return 'rationales' in results[0]\
+        and len(results[0]['rationales']) > 0\
+        and 'hard_rationale_predictions' in results[0]['rationales'][0]\
+        and results[0]['rationales'][0]['hard_rationale_predictions'] is not None\
+        and len(results[0]['rationales'][0]['hard_rationale_predictions']) > 0
 
 def _has_soft_predictions(results: List[dict]) -> bool:
     # assumes that we have run "verification" over the inputs
@@ -475,7 +546,6 @@ def main():
     Contents are expected to be jsonl of:
     {
         "annotation_id": str, required
-        # these classifications *must not* overlap
         # these classifications *must not* overlap
         "rationales": List[
             {
@@ -514,6 +584,11 @@ def main():
         "sufficiency_classification_scores": Dict[str, float], optional
         # the number of tokens required to flip the prediction - see "Is Attention Interpretable" by Serrano and Smith.
         "tokens_to_flip": int, optional
+        "thresholded_scores": List[{
+            "threshold": float, required,
+            "comprehensiveness_classification_scores": like "classification_scores"
+            "sufficiency_classification_scores": like "classification_scores"
+        }], optional. if present, then "classification" and "classification_scores" must be present
     }
     When providing one of the optional fields, it must be provided for *every* instance.
     The classification, classification_score, and comprehensiveness_classification_scores
@@ -527,6 +602,7 @@ def main():
     the IOU threshold. This score can be computed for arbitrary thresholds.
     ''')
     parser.add_argument('--score_file', dest='score_file', required=False, default=None, help='Where to write results?')
+    parser.add_argument('--aopc_thresholds', nargs='+', required=False, type=float, default=[0.01, 0.05, 0.1, 0.2, 0.5], help='Thresholds for AOPC Thresholds')
     args = parser.parse_args()
     results = load_jsonl(args.results)
     docids = set(chain.from_iterable([rat['docid'] for rat in res['rationales']] for res in results))
@@ -578,7 +654,7 @@ def main():
 
     if has_final_predictions:
         flattened_documents = load_flattened_documents(args.data_dir, docids)
-        class_results = score_classifications(results, annotations, flattened_documents)
+        class_results = score_classifications(results, annotations, flattened_documents, args.aopc_thresholds)
         scores['classification_scores'] = class_results
     else:
         logging.info("No classification scores detected, skipping classification")

@@ -11,24 +11,25 @@ import torch.nn as nn
 from sklearn.metrics import accuracy_score, classification_report
 
 from rationale_benchmark.utils import Annotation
-from rationale_benchmark.models.model_utils import PaddedSequence
 
 from rationale_benchmark.models.pipeline.pipeline_utils import (
-    SentenceEvidence,
     annotations_to_evidence_classification,
+    token_annotations_to_evidence_classification,
     make_preds_epoch,
 )
 
+
 def train_evidence_classifier(evidence_classifier: nn.Module,
-          save_dir: str,
-          train: List[Annotation],
-          val: List[Annotation],
-          documents: Dict[str, List[List[int]]],
-          model_pars: dict,
-          class_interner: Dict[str, int],
-          optimizer=None,
-          scheduler=None,
-          tensorize_model_inputs: bool=True) -> Tuple[nn.Module, dict]:
+                              save_dir: str,
+                              train: List[Annotation],
+                              val: List[Annotation],
+                              documents: Dict[str, List[List[int]]],
+                              model_pars: dict,
+                              class_interner: Dict[str, int],
+                              optimizer=None,
+                              scheduler=None,
+                              tensorize_model_inputs: bool = True,
+                              token_only_evidence: bool=False) -> Tuple[nn.Module, dict]:
     """Trains an end-task classifier based on the ground truth evidence
 
     This method tracks loss on the validation set, saves intermediate
@@ -45,7 +46,8 @@ def train_evidence_classifier(evidence_classifier: nn.Module,
         model_pars: Arbitrary parameters directory, assumed to contain an "evidence_classifier" sub-dict with:
             lr: learning rate
             batch_size: an int
-            sampling_method: a string, plus additional params in the dict to define creation of a sampler. This should probably jut be "everything"
+            sampling_method: a string, plus additional params in the dict to define creation of a sampler.
+                This should probably just be "everything"
             epochs: the number of epochs to train for
             patience: how long to wait for an improvement before giving up.
             max_grad_norm: optional, clip gradients.
@@ -67,17 +69,21 @@ def train_evidence_classifier(evidence_classifier: nn.Module,
 
     device = next(evidence_classifier.parameters()).device
     if optimizer is None:
-        optimizer = torch.optim.Adam(evidence_classifier.parameters(), lr = model_pars['evidence_classifier']['lr'])
+        optimizer = torch.optim.Adam(evidence_classifier.parameters(), lr=model_pars['evidence_classifier']['lr'])
     criterion = nn.CrossEntropyLoss(reduction='none')
     batch_size = model_pars['evidence_classifier']['batch_size']
     epochs = model_pars['evidence_classifier']['epochs']
     patience = model_pars['evidence_classifier']['patience']
     max_grad_norm = model_pars['evidence_classifier'].get('max_grad_norm', None)
 
-    evidence_train_data = annotations_to_evidence_classification(train, documents, class_interner, include_all=False)
-    evidence_val_data = annotations_to_evidence_classification(val, documents, class_interner, include_all=False)
+    if token_only_evidence:
+        evidence_train_data = token_annotations_to_evidence_classification(train, documents, class_interner)
+        evidence_val_data = token_annotations_to_evidence_classification(val, documents, class_interner)
+    else:
+        evidence_train_data = annotations_to_evidence_classification(train, documents, class_interner, include_all=False)
+        evidence_val_data = annotations_to_evidence_classification(val, documents, class_interner, include_all=False)
 
-    class_labels = [k for k,v in sorted(class_interner.items())]
+    class_labels = [k for k, v in sorted(class_interner.items())]
 
     results = {
         'train_loss': [],
@@ -102,7 +108,7 @@ def train_evidence_classifier(evidence_classifier: nn.Module,
             start_epoch = epochs
         results = epoch_data['results']
         best_epoch = start_epoch
-        best_model_state_dict = OrderedDict({k:v.cpu() for k,v in evidence_classifier.state_dict().items()})
+        best_model_state_dict = OrderedDict({k: v.cpu() for k, v in evidence_classifier.state_dict().items()})
         logging.info(f'Restoring training from epoch {start_epoch}')
     logging.info(f'Training evidence classifier from epoch {start_epoch} until epoch {epochs}')
     optimizer.zero_grad()
@@ -111,9 +117,10 @@ def train_evidence_classifier(evidence_classifier: nn.Module,
         epoch_val_data = random.sample(evidence_val_data, k=len(evidence_val_data))
         epoch_train_loss = 0
         evidence_classifier.train()
-        logging.info(f'Training with {len(epoch_train_data) // batch_size} batches with {len(epoch_train_data)} examples')
+        logging.info(
+            f'Training with {len(epoch_train_data) // batch_size} batches with {len(epoch_train_data)} examples')
         for batch_start in range(0, len(epoch_train_data), batch_size):
-            batch_elements = epoch_train_data[batch_start:min(batch_start+batch_size, len(epoch_train_data))]
+            batch_elements = epoch_train_data[batch_start:min(batch_start + batch_size, len(epoch_train_data))]
             targets, queries, sentences = zip(*[(s.kls, s.query, s.sentence) for s in batch_elements])
             ids = [(s.ann_id, s.docid, s.index) for s in batch_elements]
             targets = torch.tensor(targets, dtype=torch.long, device=device)
@@ -125,7 +132,7 @@ def train_evidence_classifier(evidence_classifier: nn.Module,
             epoch_train_loss += loss.item()
             loss = loss / len(preds)  # accumulate entire loss above
             loss.backward()
-            assert loss == loss # for nans
+            assert loss == loss  # for nans
             if max_grad_norm:
                 torch.nn.utils.clip_grad_norm_(evidence_classifier.parameters(), max_grad_norm)
             optimizer.step()
@@ -133,25 +140,33 @@ def train_evidence_classifier(evidence_classifier: nn.Module,
                 scheduler.step()
             optimizer.zero_grad()
         epoch_train_loss /= len(epoch_train_data)
-        assert epoch_train_loss == epoch_train_loss # for nans
+        assert epoch_train_loss == epoch_train_loss  # for nans
         results['train_loss'].append(epoch_train_loss)
         logging.info(f'Epoch {epoch} training loss {epoch_train_loss}')
 
         with torch.no_grad():
-            epoch_train_loss, epoch_train_soft_pred, epoch_train_hard_pred, epoch_train_truth = make_preds_epoch(evidence_classifier, epoch_train_data, batch_size, device, criterion=criterion, tensorize_model_inputs=tensorize_model_inputs)
-            results['train_f1'].append(classification_report(epoch_train_truth, epoch_train_hard_pred, target_names=class_labels, output_dict=True))
+            epoch_train_loss, epoch_train_soft_pred, epoch_train_hard_pred, epoch_train_truth = make_preds_epoch(
+                evidence_classifier, epoch_train_data, batch_size, device, criterion=criterion,
+                tensorize_model_inputs=tensorize_model_inputs)
+            results['train_f1'].append(
+                classification_report(epoch_train_truth, epoch_train_hard_pred, target_names=class_labels,
+                                      output_dict=True))
             results['train_acc'].append(accuracy_score(epoch_train_truth, epoch_train_hard_pred))
-            epoch_val_loss, epoch_val_soft_pred, epoch_val_hard_pred, epoch_val_truth = make_preds_epoch(evidence_classifier, epoch_val_data, batch_size, device, criterion=criterion, tensorize_model_inputs=tensorize_model_inputs)
+            epoch_val_loss, epoch_val_soft_pred, epoch_val_hard_pred, epoch_val_truth = make_preds_epoch(
+                evidence_classifier, epoch_val_data, batch_size, device, criterion=criterion,
+                tensorize_model_inputs=tensorize_model_inputs)
             results['val_loss'].append(epoch_val_loss)
-            results['val_f1'].append(classification_report(epoch_val_truth, epoch_val_hard_pred, target_names=class_labels, output_dict=True))
+            results['val_f1'].append(
+                classification_report(epoch_val_truth, epoch_val_hard_pred, target_names=class_labels,
+                                      output_dict=True))
             results['val_acc'].append(accuracy_score(epoch_val_truth, epoch_val_hard_pred))
-            assert epoch_val_loss == epoch_val_loss # for nans
+            assert epoch_val_loss == epoch_val_loss  # for nans
             logging.info(f'Epoch {epoch} val loss {epoch_val_loss}')
             logging.info(f'Epoch {epoch} val acc {results["val_acc"][-1]}')
             logging.info(f'Epoch {epoch} val f1 {results["val_f1"][-1]}')
 
             if epoch_val_loss < best_val_loss:
-                best_model_state_dict = OrderedDict({k:v.cpu() for k,v in evidence_classifier.state_dict().items()})
+                best_model_state_dict = OrderedDict({k: v.cpu() for k, v in evidence_classifier.state_dict().items()})
                 best_epoch = epoch
                 best_val_loss = epoch_val_loss
                 epoch_data = {

@@ -2,7 +2,7 @@ import logging
 import os
 import random
 
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict
 from itertools import chain
 from typing import Callable, Dict, List, Tuple
 
@@ -12,7 +12,6 @@ import torch.nn as nn
 from sklearn.metrics import accuracy_score
 
 from rationale_benchmark.utils import Annotation
-from rationale_benchmark.models.model_utils import PaddedSequence
 
 from rationale_benchmark.models.pipeline.pipeline_utils import (
     SentenceEvidence,
@@ -21,7 +20,9 @@ from rationale_benchmark.models.pipeline.pipeline_utils import (
     score_rationales,
 )
 
-def _get_sampling_method(training_pars: dict) -> Callable[[List[SentenceEvidence], Dict[str, List[SentenceEvidence]]], List[SentenceEvidence]]:
+
+def _get_sampling_method(training_pars: dict) -> Callable[
+    [List[SentenceEvidence], Dict[str, List[SentenceEvidence]]], List[SentenceEvidence]]:
     """Generates a sampler that produces (positive, negative) sentence-level examples
 
     Returns a function that takes a document converted to sentence level
@@ -40,7 +41,9 @@ def _get_sampling_method(training_pars: dict) -> Callable[[List[SentenceEvidence
     if training_pars['sampling_method'] == 'random':
         sampling_ratio = training_pars['sampling_ratio']
         logging.info(f'Setting up random sampling with negative/positive ratio = {sampling_ratio}')
-        def random_sampler(document: List[SentenceEvidence], document_corpus: Dict[str, List[SentenceEvidence]]) -> List[SentenceEvidence]:
+
+        def random_sampler(document: List[SentenceEvidence], _: Dict[str, List[SentenceEvidence]]) -> \
+                List[SentenceEvidence]:
             """Takes all the positives from a document, and a random choice over negatives"""
             positives = list(filter(lambda s: s.kls == 1 and len(s.sentence) > 0, document))
             if any(map(lambda s: len(s.sentence) == 0, positives)):
@@ -54,23 +57,26 @@ def _get_sampling_method(training_pars: dict) -> Callable[[List[SentenceEvidence
             # this is an inplace shuffle.
             random.shuffle(results)
             return results
+
         return random_sampler
     elif training_pars['sampling_method'] == 'everything':
-        def everything_sampler(document: List[SentenceEvidence], document_corpus: Dict[str, List[SentenceEvidence]]) -> List[SentenceEvidence]:
+        def everything_sampler(document: List[SentenceEvidence],
+                               _: Dict[str, List[SentenceEvidence]]) -> List[SentenceEvidence]:
             return document
         return everything_sampler
     else:
         raise ValueError(f"Unknown sampling method for training: {training_pars['sampling_method']}")
 
+
 def train_evidence_identifier(evidence_identifier: nn.Module,
-          save_dir: str,
-          train: List[Annotation],
-          val: List[Annotation],
-          documents: Dict[str, List[List[int]]],
-          model_pars: dict,
-          optimizer=None,
-          scheduler=None,
-          tensorize_model_inputs: bool=True) -> Tuple[nn.Module, dict]:
+                              save_dir: str,
+                              train: List[Annotation],
+                              val: List[Annotation],
+                              documents: Dict[str, List[List[int]]],
+                              model_pars: dict,
+                              optimizer=None,
+                              scheduler=None,
+                              tensorize_model_inputs: bool = True) -> Tuple[nn.Module, dict]:
     """Trains a module for rationale identification.
 
     This method tracks loss on the entire validation set, saves intermediate
@@ -104,7 +110,8 @@ def train_evidence_identifier(evidence_identifier: nn.Module,
     """
 
     def _prep_data_for_epoch(evidence_data: Dict[str, Dict[str, List[SentenceEvidence]]],
-                             sampler: Callable[[List[SentenceEvidence], Dict[str, List[SentenceEvidence]]], List[SentenceEvidence]]
+                             sampler: Callable[
+                                 [List[SentenceEvidence], Dict[str, List[SentenceEvidence]]], List[SentenceEvidence]]
                              ) -> List[SentenceEvidence]:
         output_sentences = []
         ann_ids = sorted(evidence_data.keys())
@@ -125,7 +132,7 @@ def train_evidence_identifier(evidence_identifier: nn.Module,
     epoch_save_file = os.path.join(evidence_identifier_output_dir, 'evidence_identifier_epoch_data.pt')
 
     if optimizer is None:
-        optimizer = torch.optim.Adam(evidence_identifier.parameters(), lr = model_pars['evidence_identifier']['lr'])
+        optimizer = torch.optim.Adam(evidence_identifier.parameters(), lr=model_pars['evidence_identifier']['lr'])
     criterion = nn.CrossEntropyLoss(reduction='none')
     sampling_method = _get_sampling_method(model_pars['evidence_identifier'])
     batch_size = model_pars['evidence_identifier']['batch_size']
@@ -162,7 +169,7 @@ def train_evidence_identifier(evidence_identifier: nn.Module,
             start_epoch = epochs
         results = epoch_data['results']
         best_epoch = start_epoch
-        best_model_state_dict = OrderedDict({k:v.cpu() for k,v in evidence_identifier.state_dict().items()})
+        best_model_state_dict = OrderedDict({k: v.cpu() for k, v in evidence_identifier.state_dict().items()})
     logging.info(f'Training evidence identifier from epoch {start_epoch} until epoch {epochs}')
     optimizer.zero_grad()
     for epoch in range(start_epoch, epochs):
@@ -170,9 +177,10 @@ def train_evidence_identifier(evidence_identifier: nn.Module,
         epoch_val_data = _prep_data_for_epoch(evidence_val_data, sampling_method)
         sampled_epoch_train_loss = 0
         evidence_identifier.train()
-        logging.info(f'Training with {len(epoch_train_data) // batch_size} batches with {len(epoch_train_data)} examples')
+        logging.info(
+            f'Training with {len(epoch_train_data) // batch_size} batches with {len(epoch_train_data)} examples')
         for batch_start in range(0, len(epoch_train_data), batch_size):
-            batch_elements = epoch_train_data[batch_start:min(batch_start+batch_size, len(epoch_train_data))]
+            batch_elements = epoch_train_data[batch_start:min(batch_start + batch_size, len(epoch_train_data))]
             # we sample every time to thereoretically get a better representation of instances over the corpus.
             # this might just take more time than doing so in advance.
             targets, queries, sentences = zip(*[(s.kls, s.query, s.sentence) for s in batch_elements])
@@ -198,22 +206,37 @@ def train_evidence_identifier(evidence_identifier: nn.Module,
 
         with torch.no_grad():
             evidence_identifier.eval()
-            sampled_epoch_val_loss, _, sampled_epoch_val_hard_pred, sampled_epoch_val_truth = make_preds_epoch(evidence_identifier, epoch_val_data, batch_size, device, criterion, tensorize_model_inputs)
+            sampled_epoch_val_loss, _, sampled_epoch_val_hard_pred, sampled_epoch_val_truth = \
+                make_preds_epoch(evidence_identifier,
+                                 epoch_val_data,
+                                 batch_size,
+                                 device,
+                                 criterion,
+                                 tensorize_model_inputs)
             results['sampled_epoch_val_losses'].append(sampled_epoch_val_loss)
             sampled_epoch_val_acc = accuracy_score(sampled_epoch_val_truth, sampled_epoch_val_hard_pred)
             logging.info(f'Epoch {epoch} sampled val loss {sampled_epoch_val_loss}, acc {sampled_epoch_val_acc}')
             # evaluate over *all* of the validation data
-            all_val_data = list(filter(lambda se: len(se.sentence) > 0, chain.from_iterable(chain.from_iterable(x.values() for x in evidence_val_data.values()))))
-            epoch_val_loss, epoch_val_soft_pred, epoch_val_hard_pred, epoch_val_truth = make_preds_epoch(evidence_identifier, all_val_data, batch_size, device, criterion, tensorize_model_inputs)
+            all_val_data = list(filter(lambda se: len(se.sentence) > 0, chain.from_iterable(
+                chain.from_iterable(x.values() for x in evidence_val_data.values()))))
+            epoch_val_loss, epoch_val_soft_pred, epoch_val_hard_pred, epoch_val_truth = \
+                make_preds_epoch(evidence_identifier,
+                                 all_val_data,
+                                 batch_size,
+                                 device,
+                                 criterion,
+                                 tensorize_model_inputs)
             results['full_epoch_val_losses'].append(epoch_val_loss)
             results['full_epoch_val_acc'].append(accuracy_score(epoch_val_truth, epoch_val_hard_pred))
-            results['full_epoch_val_rationale_scores'].append(score_rationales(val, documents, epoch_val_data, epoch_val_soft_pred))
-            logging.info(f'Epoch {epoch} full val loss {epoch_val_loss}, accuracy: {results["full_epoch_val_acc"][-1]}, rationale scores: {results["full_epoch_val_rationale_scores"][-1]}')
+            results['full_epoch_val_rationale_scores'].append(
+                score_rationales(val, documents, epoch_val_data, epoch_val_soft_pred))
+            logging.info(
+                f'Epoch {epoch} full val loss {epoch_val_loss}, accuracy: {results["full_epoch_val_acc"][-1]}, rationale scores: {results["full_epoch_val_rationale_scores"][-1]}')
 
-            #if epoch_val_loss < best_val_loss:
+            # if epoch_val_loss < best_val_loss:
             if sampled_epoch_val_loss < best_val_loss:
                 logging.debug(f'Epoch {epoch} new best model with sampled val loss {sampled_epoch_val_loss}')
-                best_model_state_dict = OrderedDict({k:v.cpu() for k,v in evidence_identifier.state_dict().items()})
+                best_model_state_dict = OrderedDict({k: v.cpu() for k, v in evidence_identifier.state_dict().items()})
                 best_epoch = epoch
                 best_val_loss = sampled_epoch_val_loss
                 torch.save(evidence_identifier.state_dict(), model_save_file)
